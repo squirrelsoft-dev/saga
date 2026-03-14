@@ -1,10 +1,17 @@
 [package]
-name = "saga"
+name = "saga-time"
 version = "0.1.0"
 edition = "2021"
 description = "A local-first time tracking application with CLI and TUI"
 license = "MIT"
 repository = "https://github.com/squirrelsoft-dev/saga"
+readme = "README.md"
+keywords = ["time-tracking", "cli", "tui", "invoicing"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "saga"
+path = "src/main.rs"
 
 [dependencies]
 # TUI
