@@ -18,6 +18,12 @@ Saga combines a full-featured terminal UI (TUI) with a scriptable CLI so you can
 
 ## Installation
 
+### From crates.io
+
+```sh
+cargo install saga-time
+```
+
 ### From source
 
 ```sh
