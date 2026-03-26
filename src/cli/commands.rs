@@ -505,7 +505,11 @@ pub fn handle_log(
         sql.push_str(&conditions.join(" AND "));
     }
 
-    sql.push_str(" ORDER BY te.start_time DESC LIMIT 50");
+    if month {
+        sql.push_str(" ORDER BY te.start_time ASC");
+    } else {
+        sql.push_str(" ORDER BY te.start_time DESC LIMIT 50");
+    }
 
     let mut stmt = db.conn().prepare(&sql).context("Failed to prepare log query")?;
 
@@ -534,55 +538,150 @@ pub fn handle_log(
         return Ok(());
     }
 
-    // Print table header.
-    println!(
-        "{:<12} {:<8} {:<8} {:<12} {:<16} {}",
-        "Date".bold().underline(),
-        "Start".bold().underline(),
-        "End".bold().underline(),
-        "Duration".bold().underline(),
-        "Project".bold().underline(),
-        "Description".bold().underline(),
-    );
+    if month {
+        // Split entries by billing period: 1st-15th and 16th-end.
+        let mut period1: Vec<&(String, Option<String>, Option<i64>, String, String)> = Vec::new();
+        let mut period2: Vec<&(String, Option<String>, Option<i64>, String, String)> = Vec::new();
 
-    for (start_str, end_str, dur_secs, desc, proj_name) in &entries {
-        let start_dt = NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S")
-            .unwrap_or_default();
-        let date_str = start_dt.format("%Y-%m-%d").to_string();
-        let start_time = start_dt.format("%H:%M").to_string();
-
-        let end_time = match end_str {
-            Some(e) => {
-                NaiveDateTime::parse_from_str(e, "%Y-%m-%dT%H:%M:%S")
-                    .map(|dt| dt.format("%H:%M").to_string())
-                    .unwrap_or_else(|_| "??:??".to_string())
+        for entry in &entries {
+            let start_dt = NaiveDateTime::parse_from_str(&entry.0, "%Y-%m-%dT%H:%M:%S")
+                .unwrap_or_default();
+            if start_dt.day() <= 15 {
+                period1.push(entry);
+            } else {
+                period2.push(entry);
             }
-            None => "running".yellow().to_string(),
+        }
+
+        let month_name = {
+            let first_dt = NaiveDateTime::parse_from_str(&entries[0].0, "%Y-%m-%dT%H:%M:%S")
+                .unwrap_or_default();
+            first_dt.format("%b").to_string()
         };
 
-        let duration = match dur_secs {
-            Some(s) => format_duration(*s),
-            None => {
-                // Still running, compute elapsed.
-                let now = Local::now().naive_local();
-                let elapsed = (now - start_dt).num_seconds();
-                format!("~{}", format_duration(elapsed))
+        let mut grand_total: i64 = 0;
+
+        for (period_entries, label) in [
+            (&period1, format!("{} 1 – 15", month_name)),
+            (&period2, format!("{} 16 – 31", month_name)),
+        ] {
+            if period_entries.is_empty() {
+                continue;
             }
-        };
+
+            // Section header.
+            let header = format!("── {} ", label);
+            let pad = 68usize.saturating_sub(header.len());
+            println!("\n{}{}", header.bold(), "─".repeat(pad).bold());
+
+            // Table header.
+            println!(
+                "{:<12} {:<8} {:<8} {:<12} {:<16} {}",
+                "Date".bold().underline(),
+                "Start".bold().underline(),
+                "End".bold().underline(),
+                "Duration".bold().underline(),
+                "Project".bold().underline(),
+                "Description".bold().underline(),
+            );
+
+            let mut period_secs: i64 = 0;
+
+            for (start_str, end_str, dur_secs, desc, proj_name) in period_entries {
+                let start_dt = NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S")
+                    .unwrap_or_default();
+                let date_str = start_dt.format("%Y-%m-%d").to_string();
+                let start_time = start_dt.format("%H:%M").to_string();
+
+                let end_time = match end_str {
+                    Some(e) => {
+                        NaiveDateTime::parse_from_str(e, "%Y-%m-%dT%H:%M:%S")
+                            .map(|dt| dt.format("%H:%M").to_string())
+                            .unwrap_or_else(|_| "??:??".to_string())
+                    }
+                    None => "running".yellow().to_string(),
+                };
+
+                let duration = match dur_secs {
+                    Some(s) => {
+                        period_secs += s;
+                        format_duration(*s)
+                    }
+                    None => {
+                        let now = Local::now().naive_local();
+                        let elapsed = (now - start_dt).num_seconds();
+                        format!("~{}", format_duration(elapsed))
+                    }
+                };
+
+                println!(
+                    "{:<12} {:<8} {:<8} {:<12} {:<16} {}",
+                    date_str, start_time, end_time, duration, proj_name.cyan(), desc
+                );
+            }
+
+            println!(
+                "{:>40} {}",
+                "Period total:".bold(),
+                format_duration(period_secs).yellow().bold()
+            );
+            grand_total += period_secs;
+        }
 
         println!(
+            "\n{} {}",
+            "Total:".bold(),
+            format_duration(grand_total).yellow().bold()
+        );
+    } else {
+        // Default flat output for non-month views.
+        println!(
             "{:<12} {:<8} {:<8} {:<12} {:<16} {}",
-            date_str, start_time, end_time, duration, proj_name.cyan(), desc
+            "Date".bold().underline(),
+            "Start".bold().underline(),
+            "End".bold().underline(),
+            "Duration".bold().underline(),
+            "Project".bold().underline(),
+            "Description".bold().underline(),
+        );
+
+        for (start_str, end_str, dur_secs, desc, proj_name) in &entries {
+            let start_dt = NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S")
+                .unwrap_or_default();
+            let date_str = start_dt.format("%Y-%m-%d").to_string();
+            let start_time = start_dt.format("%H:%M").to_string();
+
+            let end_time = match end_str {
+                Some(e) => {
+                    NaiveDateTime::parse_from_str(e, "%Y-%m-%dT%H:%M:%S")
+                        .map(|dt| dt.format("%H:%M").to_string())
+                        .unwrap_or_else(|_| "??:??".to_string())
+                }
+                None => "running".yellow().to_string(),
+            };
+
+            let duration = match dur_secs {
+                Some(s) => format_duration(*s),
+                None => {
+                    let now = Local::now().naive_local();
+                    let elapsed = (now - start_dt).num_seconds();
+                    format!("~{}", format_duration(elapsed))
+                }
+            };
+
+            println!(
+                "{:<12} {:<8} {:<8} {:<12} {:<16} {}",
+                date_str, start_time, end_time, duration, proj_name.cyan(), desc
+            );
+        }
+
+        let total_secs: i64 = entries.iter().filter_map(|(_, _, d, _, _)| *d).sum();
+        println!(
+            "\n{} {}",
+            "Total:".bold(),
+            format_duration(total_secs).yellow().bold()
         );
     }
-
-    // Print total.
-    let total_secs: i64 = entries.iter().filter_map(|(_, _, d, _, _)| *d).sum();
-    println!(
-        "\n{} {}",
-        "Total:".bold(),
-        format_duration(total_secs).yellow().bold()
-    );
 
     Ok(())
 }
